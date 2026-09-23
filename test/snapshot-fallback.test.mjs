@@ -119,8 +119,8 @@ test("snapshot: SNAPSHOT_LIVE=0 answers from disk without consulting the retaine
   assert.equal(calls.stored, 0); // the disk copy is served first — no pointless round-trip per fetch
 });
 
-test("snapshot: default (auto) spares a battery camera the live burst", async () => {
-  const { handler, calls } = setup({ live: "throw", stored: "throw", battery: true });
+test("snapshot: no mode with SNAPSHOT_LIVE=auto spares a battery camera the live burst", async () => {
+  const { handler, calls } = setup({ live: "throw", stored: "throw", env: { SNAPSHOT_LIVE: "auto" }, battery: true });
   const out = await get(handler);
   assert.equal(out.code, 200);
   assert.deepEqual(out.body, JPEG); // served from disk
@@ -141,6 +141,37 @@ test("snapshot: SNAPSHOT_LIVE=1 forces the burst even on a battery camera", asyn
   assert.equal(out.code, 200);
   assert.equal(out.body.toString(), "LIVE");
   assert.equal(calls.live, 1);
+});
+
+test("snapshot: mode=auto keeps the automatic battery policy", async () => {
+  const { handler, calls } = setup({ battery: true, env: { SNAPSHOT_LIVE: "1" } });
+  const out = await get(handler, "/snapshot/CAM1?mode=auto");
+  assert.equal(out.code, 200);
+  assert.deepEqual(out.body, JPEG);
+  assert.equal(calls.live, 0);
+});
+
+test("snapshot: mode=stored never invokes a fresh live snapshot", async () => {
+  const { handler, calls } = setup({ battery: true, env: { SNAPSHOT_LIVE: "1" } });
+  const out = await get(handler, "/snapshot/CAM1?mode=stored");
+  assert.equal(out.code, 200);
+  assert.deepEqual(out.body, JPEG);
+  assert.equal(calls.live, 0);
+});
+
+test("snapshot: mode=live invokes a fresh snapshot for a battery camera", async () => {
+  const { handler, calls } = setup({ battery: true, env: { SNAPSHOT_LIVE: "0" } });
+  const out = await get(handler, "/snapshot/CAM1?mode=live");
+  assert.equal(out.code, 200);
+  assert.equal(out.body.toString(), "LIVE");
+  assert.equal(calls.live, 1);
+});
+
+test("snapshot: invalid mode is rejected", async () => {
+  const { handler } = setup();
+  const out = await get(handler, "/snapshot/CAM1?mode=burst");
+  assert.equal(out.code, 400);
+  assert.deepEqual(JSON.parse(out.body), { error: "invalid snapshot mode", mode: "burst" });
 });
 
 test("snapshot: serves the last live picture when it is newer than the last event", async () => {

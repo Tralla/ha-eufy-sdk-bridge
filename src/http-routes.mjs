@@ -75,6 +75,10 @@ export function createHttpHandler(ctx) {
   return async function handleHttp(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const [, kind, sn] = url.pathname.split("/");
+    const snapshotMode = url.searchParams.get("mode");
+    if (kind === "snapshot" && snapshotMode != null && !["auto", "stored", "live"].includes(snapshotMode)) {
+      return json(res, 400, { error: "invalid snapshot mode", mode: snapshotMode });
+    }
 
     if (url.pathname === "/healthz") {
       const idleSec = Math.round((Date.now() - flags.lastActivity) / 1000);
@@ -134,12 +138,23 @@ export function createHttpHandler(ctx) {
         // A battery camera pays a radio wake for every still; a mains one does not. Same test the idle
         // watcher uses (see stream-idle.mjs), so "which cameras are expensive" is decided in one way.
         const onBattery = (device.describe?.()?.capabilities ?? []).includes("battery");
-        const wantLive = cfg.snapshotLive === "auto" ? !onBattery : cfg.snapshotLive;
+        const wantLive =
+          snapshotMode === "live"
+            ? true
+            : snapshotMode === "stored"
+              ? false
+              : snapshotMode === "auto"
+                ? !onBattery
+                : cfg.snapshotLive === "auto"
+                  ? !onBattery
+                  : cfg.snapshotLive;
         let jpeg;
         let why =
-          cfg.snapshotLive === "auto"
+          snapshotMode === "auto" || (snapshotMode == null && cfg.snapshotLive === "auto")
             ? "battery camera — no live burst (SNAPSHOT_LIVE=auto)"
-            : "live burst disabled (SNAPSHOT_LIVE=0)";
+            : snapshotMode === "stored"
+              ? "live burst disabled (mode=stored)"
+              : "live burst disabled (SNAPSHOT_LIVE=0)";
         if (wantLive) {
           try {
             ({ jpeg } = await cam.snapshotLive());
