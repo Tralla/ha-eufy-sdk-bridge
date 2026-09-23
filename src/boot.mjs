@@ -10,8 +10,7 @@ import { writeGo2rtcConfig } from "../go2rtc-config.mjs";
  * visible in the log. Two cameras on ONE HomeBase that share a raw `device_channel` (or both omit it) is
  * the signature of the bug where only one of a same-model pair streams and updates detections — the SDK
  * addresses live video + inbound frames by (station, channel), so a shared channel collapses both onto
- * the first. `resolvedChannel` is the SDK's own disambiguated `EufyDevice.channel` (present once the
- * channel-disambiguation build is installed); when it differs from `raw` per camera, the fix is active.
+ * the first (newer SDK builds refuse such a camera with `DeviceChannelUnresolvedError` instead).
  * Best-effort; never throws.
  */
 async function logCameraChannelMap(eufy, cams) {
@@ -25,14 +24,13 @@ async function logCameraChannelMap(eufy, cams) {
         model: d.raw?.device_model ?? "?",
         station: d.stationSn ?? d.sn,
         raw: typeof raw === "number" ? raw : "∅",
-        channel: typeof d.channel === "number" ? d.channel : "—",
         p2p: d.p2pDid ? "yes" : "no",
       };
     });
   if (!rows.length) return;
-  console.log("[bridge] camera channel map (station  raw=device_channel → resolvedChannel  sn  model):");
+  console.log("[bridge] camera channel map (station  device_channel  sn  model):");
   for (const r of [...rows].sort((a, b) => a.station.localeCompare(b.station) || String(a.raw).localeCompare(String(b.raw))))
-    console.log(`  ${r.station}  raw=${r.raw} → ch=${r.channel}  ${r.sn}  ${r.model}  p2p=${r.p2p}`);
+    console.log(`  ${r.station}  ch=${r.raw}  ${r.sn}  ${r.model}  p2p=${r.p2p}`);
   // Flag same-station cameras sharing a raw device_channel (both-missing counts) — the collision signature.
   const byStationChannel = new Map();
   for (const r of rows) {
@@ -45,7 +43,7 @@ async function logCameraChannelMap(eufy, cams) {
     if (sns.length < 2) continue;
     const [station, raw] = key.split("|");
     console.log(
-      `  ⚠ CHANNEL COLLISION on ${station} raw device_channel=${raw}: ${sns.join(", ")} — only one streams/detects until the SDK channel-disambiguation fix is deployed`,
+      `  ⚠ CHANNEL COLLISION on ${station} raw device_channel=${raw}: ${sns.join(", ")} — the SDK cannot tell these apart by channel`,
     );
   }
 }
