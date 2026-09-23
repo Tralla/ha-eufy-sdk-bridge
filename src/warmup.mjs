@@ -30,6 +30,14 @@ const LOCAL_REFRESH_SCHEDULE = (process.env.EVENT_IMAGE_REFRESH_SCHEDULE_MS || "
 const LOCAL_REFRESH_TAIL_MS = Number(process.env.EVENT_IMAGE_REFRESH_TAIL_MS) || 30000;
 const LOCAL_REFRESH_MAX_MS = Number(process.env.EVENT_IMAGE_REFRESH_MAX_MS) || 240000;
 
+// Even the tail (LOCAL_REFRESH_MAX_MS) can expire before the HomeBase writes the crop — a busy or
+// contended P2P session drops the cover fetch entirely ("no image"), and the crop only lands minutes
+// later. Pressing "Refresh Last Event" then works, which is the whole tell. So when HA next fetches a
+// STALE "Last event", re-attempt the local cover in the background (see autoHealEventImage) — the same
+// query the button runs, made automatic. Throttled per device to keep HA's image polling from firing a
+// P2P query every time; env-tunable, 0 disables the auto-heal.
+const AUTOHEAL_COOLDOWN_MS = Number(process.env.EVENT_IMAGE_AUTOHEAL_COOLDOWN_MS ?? 60000);
+
 export function createWarmup(ctx) {
   const { eufy, eventImageDir } = ctx;
   const { faceNames } = ctx.state;
@@ -50,12 +58,22 @@ export function createWarmup(ctx) {
     return devs.find((d) => d.raw?.member?.admin_user_id)?.raw?.member?.admin_user_id ?? eufy.api?.auth?.userId ?? "";
   }
 
+  /**
+   * The stations' own P2P sessions, which are what the DB queries here run on. `getP2pSessions()` also
+   * lists per-camera MEDIA sessions (keyed `<stationSn>#live:<channel>`), opened for a camera whose
+   * station session is already streaming; those carry live media only, so a DB query on one would be
+   * wasted at best and disturb that camera's stream at worst.
+   */
+  function stationSessions() {
+    return new Map([...eufy.getP2pSessions()].filter(([key]) => !String(key).includes("#live:")));
+  }
+
   /** Sessions come up asynchronously after login — wait (up to ~20s) for at least one to appear. */
   async function awaitSessions() {
-    let sessions = eufy.getP2pSessions();
+    let sessions = stationSessions();
     for (let i = 0; i < 20 && sessions.size === 0; i++) {
       await sleep(1000);
-      sessions = eufy.getP2pSessions();
+      sessions = stationSessions();
     }
     return sessions;
   }
@@ -288,7 +306,7 @@ export function createWarmup(ctx) {
     return withDbLock(async () => {
       if (!sn) return false;
       try {
-        const sessions = eufy.getP2pSessions();
+        const sessions = stationSessions();
         if (!sessions.size) return false;
         const devs = await eufy.getDevices();
         const accountId = await accountIdOf(devs);
@@ -446,6 +464,33 @@ export function createWarmup(ctx) {
     return changed;
   }
 
+  /**
+   * Self-heal a stale "Last event" image when HA next fetches it. The on-detection retry
+   * ({@link onDetectionRefresh}) gives up after {@link LOCAL_REFRESH_MAX_MS} if the HomeBase hasn't
+   * written the crop yet (or a contended P2P session dropped the fetch); the crop then lands later and
+   * the image sits stale until the next detection or a manual "Refresh Last Event". Calling this from the
+   * `/event-image` route re-attempts the local cover in the BACKGROUND — the same query the button runs —
+   * so a later fetch picks up the fresh image with no button press. Fire-and-forget: the HTTP response
+   * still serves the current copy immediately; a genuinely-new image nudges HA to re-pull.
+   *
+   * Guards against churning the P2P session: it does nothing while an on-detection refresh is already in
+   * flight for this device (shared {@link pendingRefresh}), and it self-throttles per device to at most
+   * one attempt per {@link AUTOHEAL_COOLDOWN_MS} (0 disables). Only the local-cover path is retried, which
+   * is the one that gets stuck; a pushed-thumbnail (cloud) cam heals through its own retry window.
+   */
+  const lastAutoHeal = new Map(); // sn -> ts of the last auto-heal attempt
+  function autoHealEventImage(sn) {
+    if (!sn || !AUTOHEAL_COOLDOWN_MS || pendingRefresh.has(sn)) return;
+    const now = Date.now();
+    if (now - (lastAutoHeal.get(sn) ?? 0) < AUTOHEAL_COOLDOWN_MS) return;
+    lastAutoHeal.set(sn, now);
+    pendingRefresh.add(sn); // mutual-exclusion with onDetectionRefresh: never two cover queries at once
+    void refreshLastEventImageFor(sn)
+      .then((changed) => nudge(sn, changed))
+      .catch(() => {})
+      .finally(() => pendingRefresh.delete(sn));
+  }
+
   return {
     warmFaceRoster,
     warmLastEventImages,
@@ -453,5 +498,6 @@ export function createWarmup(ctx) {
     refreshStoredSnapshotFor,
     onDetectionRefresh,
     forceRefreshEventImage,
+    autoHealEventImage,
   };
 }

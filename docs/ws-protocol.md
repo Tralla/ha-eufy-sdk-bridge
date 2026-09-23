@@ -174,6 +174,30 @@ device's capabilities expose (e.g. `statusLed`, `nightVision`, guard-mode `mode`
 { "id": 6, "ok": false, "error": "device … does not support 'statusLed'" }
 ```
 
+### `device.action`
+
+Invoke a capability **action** — a typed method that is not a scalar property, so `device.set` cannot
+reach it. `{ sn, action, args? }`, where `args` is the positional argument list. Only methods a
+capability surface exposes are reachable; today those surfaces are `smart_light`, `camera`, `lock` and
+`siren`. _(Requires auth.)_
+
+```jsonc
+// sound the alarm for 10 s — a HomeBase, or a camera attached to one
+{ "id": 9, "cmd": "device.action", "sn": "EXAMPLE-CAM-0001", "action": "trigger", "args": [10] }
+// ←
+{ "id": 9, "ok": true, "result": null }
+// stop it before the duration runs out
+{ "id": 10, "cmd": "device.action", "sn": "EXAMPLE-CAM-0001", "action": "stop" }
+// no surface on this device carries the verb →
+{ "id": 11, "ok": false, "error": "no action 'trigger' on EXAMPLE-CAM-0002" }
+```
+
+The siren verbs install only where the SDK has evidence for a wire: a HomeBase reporting hub-alarm
+params, a camera attached to one that reports the EAS slot, or a standalone siren (`stop` only, plus
+its own `test`). A device that has them lists `"siren"` among its `devices.list` capabilities — the
+duration is validated by the SDK, which rejects anything that is not a positive whole number of
+seconds.
+
 ### `device.reboot`
 
 Reboot a **HomeBase / station** (maps to the SDK's `reboot`). Only devices with `canReboot: true` accept
@@ -246,6 +270,44 @@ Advisory only — the media connection closing is the real "stop". _(Requires au
 // ←  { "id": 8, "ok": true }
 ```
 
+### Anker Solix (`solix.*`)
+
+Optional — present only when the bridge has `SOLIX_EMAIL` / `SOLIX_PASSWORD` set. Solix is a **separate
+Anker account** on a separate backend, so these commands do **not** require the eufy `auth.state == "ok"`
+and are independent of the eufy device commands above.
+
+#### `solix.status`
+
+```jsonc
+// →  { "id": 9, "cmd": "solix.status" }
+// ←  { "id": 9, "ok": true, "solix": { "enabled": true, "state": "ready", "deviceCount": 1 } }
+```
+
+`state`: `disabled` | `connecting` | `2fa` | `ready` | `error`. `enabled` is `false` when `SOLIX_*` is unset.
+
+#### `solix.devices`
+
+The account's Solix devices (empty until `state == "ready"`). _(Not gated by eufy auth.)_
+
+```jsonc
+// →  { "id": 10, "cmd": "solix.devices" }
+// ←  { "id": 10, "ok": true, "devices": [ {
+//       "source": "solix", "sn": "…", "productCode": "AE1X0", "name": "Smart Meter Gen 2",
+//       "category": "Accessory",
+//       "capabilities": ["identity", "firmware", "connectivity", "energyMeter"],
+//       "firmware": "V1.0.0.9", "online": true, "ssid": "Xman24", "rssi": -35,
+//       "values": { "gridVoltage": 237.1 } } ] }
+```
+
+#### `solix.submitCode`
+
+Complete a pending Solix 2FA (only when `state == "2fa"`). The code is never logged.
+
+```jsonc
+// →  { "id": 11, "cmd": "solix.submitCode", "code": "123456" }
+// ←  { "id": 11, "ok": true, "solix": { "enabled": true, "state": "ready", "deviceCount": 1 } }
+```
+
 ### Errors
 
 - Unknown command → `{ "id": n, "ok": false, "error": "unknown cmd: …" }`
@@ -286,6 +348,20 @@ Full set: `motion`, `personDetected`, `strangerDetected`, `doorbellPress`, `petD
 `vehicleDetected`, `dogDetected`, `armingModeChanged`, `alarm`, `lockState`, `contactState`,
 `batteryLevel`, `batteryAlert`, `ptzNotify`, `smartLightState`.
 
+### Anker Solix events
+
+Present only when Solix is configured (`SOLIX_*`).
+
+| event          | payload                             | when                                                     |
+| -------------- | ----------------------------------- | -------------------------------------------------------- |
+| `solixAuth`    | `{ state, method?, error? }`        | Solix login state changed (incl. `state: "2fa"`)         |
+| `solixReady`   | `{ devices: [...] }`                | Solix devices discovered (same shape as `solix.devices`) |
+| `solixReading` | `{ deviceSn, productCode, values }` | a live telemetry frame                                   |
+
+```json
+{ "event": "solixReading", "deviceSn": "…", "productCode": "AE1X0", "values": { "gridVoltage": 237.1 } }
+```
+
 Plus a stream-lifecycle event (not a device push):
 
 ```json
@@ -312,8 +388,7 @@ raw video protocol.
 
 ## Not yet exposed
 
-- Capability **action** verbs (PTZ move, siren test, talkback) — only property writes via `device.set`
-  today.
+- Capability **action** verbs beyond the surfaces `device.action` routes today (PTZ move, talkback).
 - Guard / station security mode (arm home/away/disarm).
 - Per-device event subscription/filtering (events broadcast to all clients).
 - Audio / recording / timelapse.
