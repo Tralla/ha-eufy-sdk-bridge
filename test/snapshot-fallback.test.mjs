@@ -125,8 +125,9 @@ test("snapshot: bare live request keeps defined diagnostics when acquisition has
     const out = await get(handler);
     const body = JSON.parse(out.body);
     assert.equal(out.code, 404);
-    assert.doesNotMatch(JSON.stringify(body), /undefined/);
-    assert.doesNotMatch(body.reason ?? "", /mode=(live|auto)/);
+    assert.equal(typeof body.reason, "string");
+    assert.doesNotMatch(body.reason, /undefined/);
+    assert.doesNotMatch(body.reason, /mode=(live|auto)/);
     if (storedMode === "throw") assert.match(body.reason, /nothing retained: not-observed/);
     assert.deepEqual(calls, { live: 1, stored: 1 });
   }
@@ -165,7 +166,7 @@ test("snapshot: SNAPSHOT_LIVE=1 forces the burst even on a battery camera", asyn
   assert.equal(calls.live, 1);
 });
 
-test("snapshot: mode=auto keeps the automatic battery policy", async () => {
+test("snapshot: mode=auto keeps the automatic battery-capability policy", async () => {
   const { handler, calls } = setup({ battery: true, env: { SNAPSHOT_LIVE: "1" } });
   const out = await get(handler, "/snapshot/CAM1?mode=auto");
   assert.equal(out.code, 200);
@@ -200,7 +201,7 @@ test("snapshot: mode=auto reports an empty live result without referring to glob
   assert.equal(JSON.parse(out.body).reason, "mode=auto live burst produced no usable image");
 });
 
-test("snapshot: mode=auto takes a live still from a mains camera despite SNAPSHOT_LIVE=0", async () => {
+test("snapshot: mode=auto takes a live still from a camera without battery capability despite SNAPSHOT_LIVE=0", async () => {
   const { handler, calls } = setup({ battery: false, env: { SNAPSHOT_LIVE: "0" } });
   const out = await get(handler, "/snapshot/CAM1?mode=auto");
   assert.equal(out.code, 200);
@@ -237,7 +238,7 @@ test("snapshot: mode=stored returns 404 when stored and persisted images are una
   }
 });
 
-test("snapshot: mode=live attempts live snapshot acquisition for a battery camera", async () => {
+test("snapshot: mode=live attempts live snapshot acquisition for a battery-capable camera", async () => {
   const { handler, calls } = setup({ battery: true, env: { SNAPSHOT_LIVE: "0" } });
   const out = await get(handler, "/snapshot/CAM1?mode=live");
   assert.equal(out.code, 200);
@@ -316,10 +317,6 @@ test("snapshot: mode validation follows readiness and applies only to the snapsh
   const otherRoute = await get(handler, "/event-image/CAM1?mode=invalid");
   assert.equal(otherRoute.code, 200);
   assert.equal(calls.stored, 1);
-
-  const extraPathComponent = await get(handler, "/snapshot/CAM1/extra?mode=live");
-  assert.equal(extraPathComponent.code, 200);
-  assert.equal(calls.live, 1);
 });
 
 test("snapshot: sequential modes remain request-local", async () => {

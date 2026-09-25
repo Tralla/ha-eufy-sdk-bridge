@@ -161,7 +161,7 @@ export function createHttpHandler(ctx) {
           if (snapshotMode === "stored") {
             why = "live burst disabled (mode=stored)";
           } else if (snapshotMode === "auto") {
-            why = "live burst disabled by explicit mode=auto for battery camera";
+            why = "live burst disabled by explicit mode=auto for battery-capable camera";
           } else if (cfg.snapshotLive === "auto") {
             why = "battery camera — no live burst (SNAPSHOT_LIVE=auto)";
           } else {
