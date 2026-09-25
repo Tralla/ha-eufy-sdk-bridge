@@ -113,6 +113,25 @@ test("snapshot: reports why when there is no image anywhere", async () => {
   assert.match(body.reason, /nothing retained/);
 });
 
+test("snapshot: bare live request keeps defined diagnostics when acquisition has no image", async () => {
+  for (const storedMode of ["empty", "throw"]) {
+    const { handler, calls } = setup({
+      live: "empty",
+      stored: storedMode,
+      persist: false,
+      battery: true,
+      env: { SNAPSHOT_LIVE: "1" },
+    });
+    const out = await get(handler);
+    const body = JSON.parse(out.body);
+    assert.equal(out.code, 404);
+    assert.doesNotMatch(JSON.stringify(body), /undefined/);
+    assert.doesNotMatch(body.reason ?? "", /mode=(live|auto)/);
+    if (storedMode === "throw") assert.match(body.reason, /nothing retained: not-observed/);
+    assert.deepEqual(calls, { live: 1, stored: 1 });
+  }
+});
+
 test("snapshot: SNAPSHOT_LIVE=0 answers from disk without consulting the retained thumbnail", async () => {
   const { handler, calls } = setup({ stored: "throw", env: { SNAPSHOT_LIVE: "0" } });
   const out = await get(handler);

@@ -144,7 +144,7 @@ export function createHttpHandler(ctx) {
         // watcher uses (see stream-idle.mjs), so "which cameras are expensive" is decided in one way.
         const onBattery = (device.describe?.()?.capabilities ?? []).includes("battery");
         let wantLive;
-        let why;
+        let why = "";
         switch (snapshotMode) {
           case "live":
             wantLive = true;
@@ -187,7 +187,8 @@ export function createHttpHandler(ctx) {
           try {
             jpeg = await cam.snapshotStored?.(); // may throw when nothing is retained
           } catch (e) {
-            why = `${why}; nothing retained: ${e?.reason ?? e?.message ?? e}`;
+            const reason = `nothing retained: ${e?.reason ?? e?.message ?? e}`;
+            why = why ? `${why}; ${reason}` : reason;
           }
         }
         if (jpeg) {
