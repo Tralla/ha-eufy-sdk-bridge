@@ -15,7 +15,7 @@ import { createHttpHandler } from "../src/http-routes.mjs";
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x01, 0xff, 0xd9]); // enough to be recognisable
 
 /** A handler over a fake camera; `live` / `stored` decide how those two paths behave. */
-function setup({ live, stored, env = {}, persist = true, battery = true } = {}) {
+function setup({ live, stored, env = {}, persist = true, battery = true, ready = true } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "snap-"));
   if (persist) fs.writeFileSync(path.join(dir, "last-event-CAM1.jpg"), JPEG);
   const calls = { live: 0, stored: 0 };
@@ -39,12 +39,13 @@ function setup({ live, stored, env = {}, persist = true, battery = true } = {}) 
   };
   const config = loadConfig({ EUFY_EMAIL: "x@y.z", EUFY_PASSWORD: "pw", ...env });
   const state = createState();
-  state.flags.ready = true;
+  state.flags.ready = ready;
   const ctx = {
     ...config,
     state,
     eventImageDir: dir,
     eventLog: () => {},
+    authStatus: () => ({ status: ready ? "ok" : "pending" }),
     eufy: {
       async getDevice() {
         return {
@@ -189,7 +190,7 @@ test("snapshot: mode=auto takes a live still from a mains camera despite SNAPSHO
   assert.equal(calls.stored, 0);
 });
 
-test("snapshot: mode=stored never invokes a fresh live snapshot", async () => {
+test("snapshot: mode=stored never invokes live snapshot acquisition", async () => {
   const { handler, calls } = setup({ battery: true, env: { SNAPSHOT_LIVE: "1" } });
   const out = await get(handler, "/snapshot/CAM1?mode=stored");
   assert.equal(out.code, 200);
@@ -217,7 +218,7 @@ test("snapshot: mode=stored returns 404 when stored and persisted images are una
   }
 });
 
-test("snapshot: mode=live invokes a fresh snapshot for a battery camera", async () => {
+test("snapshot: mode=live attempts live snapshot acquisition for a battery camera", async () => {
   const { handler, calls } = setup({ battery: true, env: { SNAPSHOT_LIVE: "0" } });
   const out = await get(handler, "/snapshot/CAM1?mode=live");
   assert.equal(out.code, 200);
@@ -276,6 +277,30 @@ test("snapshot: duplicate mode parameters are rejected regardless of value or or
     });
     assert.deepEqual(calls, { live: 0, stored: 0 });
   }
+});
+
+test("snapshot: mode validation follows readiness and applies only to the snapshot route", async () => {
+  const unready = setup({ ready: false });
+  const unreadyOut = await get(unready.handler, "/snapshot/CAM1?mode=invalid");
+  assert.equal(unreadyOut.code, 503);
+  assert.deepEqual(JSON.parse(unreadyOut.body), {
+    error: "not authenticated",
+    auth: { status: "pending" },
+  });
+
+  const { handler, calls } = setup({ persist: false });
+  const missingDevicePath = await get(handler, "/snapshot?mode=invalid");
+  assert.equal(missingDevicePath.code, 404);
+  assert.deepEqual(JSON.parse(missingDevicePath.body), { error: "not found" });
+  assert.deepEqual(calls, { live: 0, stored: 0 });
+
+  const otherRoute = await get(handler, "/event-image/CAM1?mode=invalid");
+  assert.equal(otherRoute.code, 200);
+  assert.equal(calls.stored, 1);
+
+  const extraPathComponent = await get(handler, "/snapshot/CAM1/extra?mode=live");
+  assert.equal(extraPathComponent.code, 200);
+  assert.equal(calls.live, 1);
 });
 
 test("snapshot: sequential modes remain request-local", async () => {

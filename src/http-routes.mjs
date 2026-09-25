@@ -75,14 +75,6 @@ export function createHttpHandler(ctx) {
   return async function handleHttp(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const [, kind, sn] = url.pathname.split("/");
-    const snapshotModes = url.searchParams.getAll("mode");
-    if (kind === "snapshot" && snapshotModes.length > 1) {
-      return json(res, 400, { error: "snapshot mode must be specified at most once" });
-    }
-    const snapshotMode = snapshotModes[0] ?? null;
-    if (kind === "snapshot" && snapshotMode != null && !["auto", "stored", "live"].includes(snapshotMode)) {
-      return json(res, 400, { error: "invalid snapshot mode", mode: snapshotMode });
-    }
 
     if (url.pathname === "/healthz") {
       const idleSec = Math.round((Date.now() - flags.lastActivity) / 1000);
@@ -107,6 +99,15 @@ export function createHttpHandler(ctx) {
     // thumbnail: without it every still is a 502 after a 10-20s wake, and the caller (HA, HomeKit) then
     // falls back to pulling video — waking the camera again for a picture we already have on disk.
     if (kind === "snapshot" && sn) {
+      const snapshotModes = url.searchParams.getAll("mode");
+      if (snapshotModes.length > 1) {
+        return json(res, 400, { error: "snapshot mode must be specified at most once" });
+      }
+      const snapshotMode = snapshotModes[0] ?? null;
+      if (snapshotMode != null && !["auto", "stored", "live"].includes(snapshotMode)) {
+        return json(res, 400, { error: "invalid snapshot mode", mode: snapshotMode });
+      }
+
       // Two pictures can sit on disk: the last event's thumbnail, and the last frame of a stream someone
       // watched (live-still.mjs). Either may be the more recent one, so serve whichever is newer.
       const candidates = [
@@ -142,34 +143,38 @@ export function createHttpHandler(ctx) {
         // A battery camera pays a radio wake for every still; a mains one does not. Same test the idle
         // watcher uses (see stream-idle.mjs), so "which cameras are expensive" is decided in one way.
         const onBattery = (device.describe?.()?.capabilities ?? []).includes("battery");
-        const wantLive =
-          snapshotMode === "live"
-            ? true
-            : snapshotMode === "stored"
-              ? false
-              : snapshotMode === "auto"
-                ? !onBattery
-                : cfg.snapshotLive === "auto"
-                  ? !onBattery
-                  : cfg.snapshotLive;
+        let wantLive;
+        let why;
+        switch (snapshotMode) {
+          case "live":
+            wantLive = true;
+            why = "live burst disabled (SNAPSHOT_LIVE=0)";
+            break;
+          case "stored":
+            wantLive = false;
+            why = "live burst disabled (mode=stored)";
+            break;
+          case "auto":
+            wantLive = !onBattery;
+            if (onBattery) why = "live burst disabled by explicit mode=auto for battery camera";
+            else why = "mode=auto live burst requested";
+            break;
+          default:
+            if (cfg.snapshotLive === "auto") {
+              wantLive = !onBattery;
+              why = "battery camera — no live burst (SNAPSHOT_LIVE=auto)";
+            } else {
+              wantLive = cfg.snapshotLive;
+              why = "live burst disabled (SNAPSHOT_LIVE=0)";
+            }
+        }
         let jpeg;
-        let why =
-          snapshotMode === "auto"
-            ? "live burst disabled by explicit mode=auto for battery camera"
-            : snapshotMode == null && cfg.snapshotLive === "auto"
-              ? "battery camera — no live burst (SNAPSHOT_LIVE=auto)"
-              : snapshotMode === "stored"
-                ? "live burst disabled (mode=stored)"
-                : "live burst disabled (SNAPSHOT_LIVE=0)";
         if (wantLive) {
           try {
             ({ jpeg } = await cam.snapshotLive());
-            why =
-              snapshotMode === "live"
-                ? "live burst produced no usable image"
-                : snapshotMode === "auto"
-                  ? "mode=auto live burst produced no usable image"
-                  : "";
+            if (snapshotMode === "live") why = "live burst produced no usable image";
+            else if (snapshotMode === "auto") why = "mode=auto live burst produced no usable image";
+            else why = "";
           } catch (e) {
             why = `live burst failed: ${e?.message ?? e}`;
           }
