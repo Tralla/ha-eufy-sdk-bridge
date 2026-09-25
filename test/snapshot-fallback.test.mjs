@@ -142,7 +142,7 @@ test("snapshot: SNAPSHOT_LIVE=0 answers from disk without consulting the retaine
   assert.equal(calls.stored, 0); // the disk copy is served first — no pointless round-trip per fetch
 });
 
-test("snapshot: no mode with SNAPSHOT_LIVE=auto spares a battery camera the live burst", async () => {
+test("snapshot: no mode with SNAPSHOT_LIVE=auto spares a battery-capable camera the live burst", async () => {
   const { handler, calls } = setup({ live: "throw", stored: "throw", env: { SNAPSHOT_LIVE: "auto" }, battery: true });
   const out = await get(handler);
   assert.equal(out.code, 200);
