@@ -154,15 +154,22 @@ export function createHttpHandler(ctx) {
                   : cfg.snapshotLive;
         let jpeg;
         let why =
-          snapshotMode === "auto" || (snapshotMode == null && cfg.snapshotLive === "auto")
-            ? "battery camera — no live burst (SNAPSHOT_LIVE=auto)"
-            : snapshotMode === "stored"
-              ? "live burst disabled (mode=stored)"
-              : "live burst disabled (SNAPSHOT_LIVE=0)";
+          snapshotMode === "auto"
+            ? "live burst disabled by explicit mode=auto for battery camera"
+            : snapshotMode == null && cfg.snapshotLive === "auto"
+              ? "battery camera — no live burst (SNAPSHOT_LIVE=auto)"
+              : snapshotMode === "stored"
+                ? "live burst disabled (mode=stored)"
+                : "live burst disabled (SNAPSHOT_LIVE=0)";
         if (wantLive) {
           try {
             ({ jpeg } = await cam.snapshotLive());
-            why = "";
+            why =
+              snapshotMode === "live"
+                ? "live burst produced no usable image"
+                : snapshotMode === "auto"
+                  ? "mode=auto live burst produced no usable image"
+                  : "";
           } catch (e) {
             why = `live burst failed: ${e?.message ?? e}`;
           }
