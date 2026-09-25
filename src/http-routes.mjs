@@ -148,7 +148,6 @@ export function createHttpHandler(ctx) {
         switch (snapshotMode) {
           case "live":
             wantLive = true;
-            why = "live burst disabled (SNAPSHOT_LIVE=0)";
             break;
           case "stored":
             wantLive = false;
@@ -156,25 +155,25 @@ export function createHttpHandler(ctx) {
             break;
           case "auto":
             wantLive = !onBattery;
-            if (onBattery) why = "live burst disabled by explicit mode=auto for battery camera";
-            else why = "mode=auto live burst requested";
+            if (!wantLive) why = "live burst disabled by explicit mode=auto for battery camera";
             break;
           default:
             if (cfg.snapshotLive === "auto") {
               wantLive = !onBattery;
-              why = "battery camera — no live burst (SNAPSHOT_LIVE=auto)";
+              if (!wantLive) why = "battery camera — no live burst (SNAPSHOT_LIVE=auto)";
             } else {
               wantLive = cfg.snapshotLive;
-              why = "live burst disabled (SNAPSHOT_LIVE=0)";
+              if (!wantLive) why = "live burst disabled (SNAPSHOT_LIVE=0)";
             }
         }
         let jpeg;
         if (wantLive) {
           try {
             ({ jpeg } = await cam.snapshotLive());
-            if (snapshotMode === "live") why = "live burst produced no usable image";
-            else if (snapshotMode === "auto") why = "mode=auto live burst produced no usable image";
-            else why = "";
+            if (!jpeg) {
+              if (snapshotMode === "live") why = "live burst produced no usable image";
+              else if (snapshotMode === "auto") why = "mode=auto live burst produced no usable image";
+            }
           } catch (e) {
             why = `live burst failed: ${e?.message ?? e}`;
           }
