@@ -143,28 +143,30 @@ export function createHttpHandler(ctx) {
         // A battery camera pays a radio wake for every still; a mains one does not. Same test the idle
         // watcher uses (see stream-idle.mjs), so "which cameras are expensive" is decided in one way.
         const onBattery = (device.describe?.()?.capabilities ?? []).includes("battery");
-        let wantLive;
-        let why = "";
+        let wantLive = cfg.snapshotLive === "auto" ? !onBattery : cfg.snapshotLive;
         switch (snapshotMode) {
           case "live":
             wantLive = true;
             break;
           case "stored":
             wantLive = false;
-            why = "live burst disabled (mode=stored)";
             break;
           case "auto":
             wantLive = !onBattery;
-            if (!wantLive) why = "live burst disabled by explicit mode=auto for battery camera";
             break;
-          default:
-            if (cfg.snapshotLive === "auto") {
-              wantLive = !onBattery;
-              if (!wantLive) why = "battery camera — no live burst (SNAPSHOT_LIVE=auto)";
-            } else {
-              wantLive = cfg.snapshotLive;
-              if (!wantLive) why = "live burst disabled (SNAPSHOT_LIVE=0)";
-            }
+        }
+
+        let why = "";
+        if (!wantLive) {
+          if (snapshotMode === "stored") {
+            why = "live burst disabled (mode=stored)";
+          } else if (snapshotMode === "auto") {
+            why = "live burst disabled by explicit mode=auto for battery camera";
+          } else if (cfg.snapshotLive === "auto") {
+            why = "battery camera — no live burst (SNAPSHOT_LIVE=auto)";
+          } else {
+            why = "live burst disabled (SNAPSHOT_LIVE=0)";
+          }
         }
         let jpeg;
         if (wantLive) {
