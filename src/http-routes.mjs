@@ -75,7 +75,11 @@ export function createHttpHandler(ctx) {
   return async function handleHttp(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const [, kind, sn] = url.pathname.split("/");
-    const snapshotMode = url.searchParams.get("mode");
+    const snapshotModes = url.searchParams.getAll("mode");
+    if (kind === "snapshot" && snapshotModes.length > 1) {
+      return json(res, 400, { error: "snapshot mode must be specified at most once" });
+    }
+    const snapshotMode = snapshotModes[0] ?? null;
     if (kind === "snapshot" && snapshotMode != null && !["auto", "stored", "live"].includes(snapshotMode)) {
       return json(res, 400, { error: "invalid snapshot mode", mode: snapshotMode });
     }

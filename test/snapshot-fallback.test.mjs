@@ -23,6 +23,7 @@ function setup({ live, stored, env = {}, persist = true, battery = true } = {}) 
     snapshotLive: async () => {
       calls.live += 1;
       if (live === "throw") throw new Error("P2P unreachable");
+      if (live === "empty") return { jpeg: undefined };
       return { jpeg: Buffer.from("LIVE") };
     },
     snapshotStored: async () => {
@@ -32,6 +33,7 @@ function setup({ live, stored, env = {}, persist = true, battery = true } = {}) 
         e.reason = "not-observed";
         throw e;
       }
+      if (stored === "empty") return undefined;
       return Buffer.from("STORED");
     },
   };
@@ -151,12 +153,41 @@ test("snapshot: mode=auto keeps the automatic battery policy", async () => {
   assert.equal(calls.live, 0);
 });
 
+test("snapshot: mode=auto takes a live still from a mains camera despite SNAPSHOT_LIVE=0", async () => {
+  const { handler, calls } = setup({ battery: false, env: { SNAPSHOT_LIVE: "0" } });
+  const out = await get(handler, "/snapshot/CAM1?mode=auto");
+  assert.equal(out.code, 200);
+  assert.equal(out.body.toString(), "LIVE");
+  assert.equal(calls.live, 1);
+  assert.equal(calls.stored, 0);
+});
+
 test("snapshot: mode=stored never invokes a fresh live snapshot", async () => {
   const { handler, calls } = setup({ battery: true, env: { SNAPSHOT_LIVE: "1" } });
   const out = await get(handler, "/snapshot/CAM1?mode=stored");
   assert.equal(out.code, 200);
   assert.deepEqual(out.body, JPEG);
   assert.equal(calls.live, 0);
+});
+
+test("snapshot: mode=stored uses snapshotStored when no image is persisted", async () => {
+  const { handler, calls } = setup({ persist: false });
+  const out = await get(handler, "/snapshot/CAM1?mode=stored");
+  assert.equal(out.code, 200);
+  assert.equal(out.body.toString(), "STORED");
+  assert.equal(calls.stored, 1);
+  assert.equal(calls.live, 0);
+});
+
+test("snapshot: mode=stored returns 404 when stored and persisted images are unavailable", async () => {
+  for (const storedMode of ["throw", "empty"]) {
+    const { handler, calls } = setup({ persist: false, stored: storedMode });
+    const out = await get(handler, "/snapshot/CAM1?mode=stored");
+    assert.equal(out.code, 404);
+    assert.equal(JSON.parse(out.body).error, "no image available");
+    assert.equal(calls.stored, 1);
+    assert.equal(calls.live, 0);
+  }
 });
 
 test("snapshot: mode=live invokes a fresh snapshot for a battery camera", async () => {
@@ -167,11 +198,53 @@ test("snapshot: mode=live invokes a fresh snapshot for a battery camera", async 
   assert.equal(calls.live, 1);
 });
 
+test("snapshot: mode=live falls back to stored and persisted images after live failure", async () => {
+  for (const liveMode of ["throw", "empty"]) {
+    const fromStored = setup({ live: liveMode, persist: false });
+    const storedOut = await get(fromStored.handler, "/snapshot/CAM1?mode=live");
+    assert.equal(storedOut.code, 200);
+    assert.equal(storedOut.body.toString(), "STORED");
+    assert.equal(fromStored.calls.live, 1);
+    assert.equal(fromStored.calls.stored, 1);
+  }
+
+  const fromPersisted = setup({ live: "throw", stored: "throw" });
+  const persistedOut = await get(fromPersisted.handler, "/snapshot/CAM1?mode=live");
+  assert.equal(persistedOut.code, 200);
+  assert.deepEqual(persistedOut.body, JPEG);
+  assert.equal(fromPersisted.calls.live, 1);
+  assert.equal(fromPersisted.calls.stored, 1);
+});
+
 test("snapshot: invalid mode is rejected", async () => {
   const { handler } = setup();
   const out = await get(handler, "/snapshot/CAM1?mode=burst");
   assert.equal(out.code, 400);
   assert.deepEqual(JSON.parse(out.body), { error: "invalid snapshot mode", mode: "burst" });
+});
+
+test("snapshot: duplicate mode parameters are rejected regardless of value or order", async () => {
+  for (const query of ["mode=stored&mode=live", "mode=stored&mode=stored"]) {
+    const { handler, calls } = setup();
+    const out = await get(handler, `/snapshot/CAM1?${query}`);
+    assert.equal(out.code, 400);
+    assert.deepEqual(JSON.parse(out.body), {
+      error: "snapshot mode must be specified at most once",
+    });
+    assert.deepEqual(calls, { live: 0, stored: 0 });
+  }
+});
+
+test("snapshot: sequential modes remain request-local", async () => {
+  const { handler, calls } = setup({ persist: false });
+
+  const stored = await get(handler, "/snapshot/CAM1?mode=stored");
+  assert.equal(stored.body.toString(), "STORED");
+  assert.deepEqual(calls, { live: 0, stored: 1 });
+
+  const live = await get(handler, "/snapshot/CAM1?mode=live");
+  assert.equal(live.body.toString(), "LIVE");
+  assert.deepEqual(calls, { live: 1, stored: 1 });
 });
 
 test("snapshot: serves the last live picture when it is newer than the last event", async () => {
