@@ -1,5 +1,5 @@
 // /snapshot must never answer "no image" while a persisted last-event thumbnail sits on disk: a caller
-// that gets nothing falls back to pulling video, which wakes a battery camera for a picture we already
+// that gets nothing falls back to pulling video, which wakes a battery-capable camera for a picture we already
 // have. Drives the real handler against a fake SDK camera whose live/stored paths fail the way an
 // account without push thumbnails fails.
 import fs from "node:fs";
@@ -50,7 +50,7 @@ function setup({ live, stored, env = {}, persist = true, battery = true, ready =
       async getDevice() {
         return {
           camera: () => cam,
-          // A battery camera pays a radio wake per still; a mains one does not. The route reads this.
+          // A battery-capable camera pays a radio wake per still; one without that capability does not. The route reads this.
           describe: () => ({
             sn: "CAM1",
             capabilities: battery ? ["camera", "video", "battery"] : ["camera", "video"],
@@ -158,7 +158,7 @@ test("snapshot: default (auto) still takes a live still from a mains camera", as
   assert.equal(calls.live, 1);
 });
 
-test("snapshot: SNAPSHOT_LIVE=1 forces the burst even on a battery camera", async () => {
+test("snapshot: SNAPSHOT_LIVE=1 forces the burst even on a battery-capable camera", async () => {
   const { handler, calls } = setup({ battery: true, env: { SNAPSHOT_LIVE: "1" } });
   const out = await get(handler);
   assert.equal(out.code, 200);
@@ -340,7 +340,7 @@ test("snapshot: serves the last live picture when it is newer than the last even
   const out = await get(handler);
   assert.equal(out.code, 200);
   assert.equal(out.body.toString(), "LIVEFRAME");
-  assert.equal(calls.live, 0); // still never woke the battery camera
+  assert.equal(calls.live, 0); // still never woke the battery-capable camera
 });
 
 test("snapshot: a newer event thumbnail wins over an older live picture", async () => {
