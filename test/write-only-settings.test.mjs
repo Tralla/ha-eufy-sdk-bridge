@@ -60,9 +60,15 @@ test("propertySpecs appends the write-only settings the SDK states, marked write
   assert.equal(tone.writeOnly, undefined);
 });
 
-test("a write-only setting whose name a reported property already carries is dropped", () => {
+test("an installed reported property whose name a write-only setting also carries is not duplicated", () => {
   const dev = fakeDevice();
   dev.properties.push({ name: "alarmVolume", type: "number", writable: true, kind: "percent", unit: "%" });
+  const describe = dev.describe;
+  dev.describe = () => {
+    const manifest = describe();
+    manifest.details[0].reads.push({ accessor: "alarmVolume", property: "alarmVolume", writable: true });
+    return manifest;
+  };
   const specs = view(["alarmVolume"]).propertySpecs(dev);
   const av = specs.filter((s) => s.name === "alarmVolume");
   assert.equal(av.length, 1, "only one alarmVolume spec");

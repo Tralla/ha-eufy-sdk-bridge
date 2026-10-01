@@ -96,15 +96,21 @@ export function createDeviceView(ctx) {
    * without knowing eufy wire ids. Wire-only fields (paramType, decode, aliases) are omitted.
    */
   function propertySpecs(dev) {
-    const reported = (dev.properties ?? []).map((p) => ({
-      name: p.name,
-      type: p.type, // "bool" | "number" | "string" | "enum"
-      unit: p.unit, // "%", "°C", "dBm", …
-      kind: p.kind, // percent | celsius | dbm | seconds | …
-      writable: p.writable, // a setter exists (device.set accepts it)
-      enumValues: p.enumValues, // { raw: label } for enums
-      description: p.description,
-    }));
+    // `dev.properties` is the broader SDK schema; expose only properties with an installed read.
+    const manifest = dev.describe?.();
+    const details = manifest?.details ?? [];
+    const installedReads = new Set(details.flatMap((detail) => detail.reads ?? []).map((read) => read.property));
+    const reported = (dev.properties ?? [])
+      .filter((p) => !manifest || installedReads.has(p.name))
+      .map((p) => ({
+        name: p.name,
+        type: p.type, // "bool" | "number" | "string" | "enum"
+        unit: p.unit, // "%", "°C", "dBm", …
+        kind: p.kind, // percent | celsius | dbm | seconds | …
+        writable: p.writable,
+        enumValues: p.enumValues, // { raw: label } for enums
+        description: p.description,
+      }));
     // Write-only settings a device ACCEPTS but never reports back (a HomeBase's alarm volume). They are
     // not in `dev.properties` — that manifest is what the device reports — so a host would otherwise never
     // learn the control exists. The SDK states them in two halves: `unobservableMembers(dev.<cap>())` names

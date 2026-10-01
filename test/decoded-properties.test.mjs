@@ -26,6 +26,33 @@ function view(dev) {
   });
 }
 
+test("propertySpecs publishes only SDK properties with installed reads", () => {
+  const dev = {
+    properties: [
+      { name: "battery", type: "number", writable: true, unit: "%" },
+      { name: "cameraInfo", type: "number", writable: false },
+    ],
+    describe: () => ({
+      details: [{ reads: [{ property: "battery", writable: false }] }],
+    }),
+  };
+
+  const properties = view(dev).propertySpecs(dev);
+  assert.deepEqual(
+    properties.map(({ name, writable }) => ({ name, writable })),
+    [{ name: "battery", writable: true }],
+  );
+});
+
+test("propertySpecs publishes nothing when the SDK manifest has no installed reads", () => {
+  const dev = {
+    properties: [{ name: "battery", type: "number", writable: false }],
+    describe: () => ({ bound: false, details: [] }),
+  };
+
+  assert.deepEqual(view(dev).propertySpecs(dev), []);
+});
+
 test("published SDK decodes recording quality while raw state and raw schema stay intact", async () => {
   const dev = camera();
   const api = view(dev);
